@@ -1,0 +1,25 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Environment Vars
+dotenv = "0.15.0"
+dotenv_codegen = "0.15.0"
+
+# DB
+rusqlite = { version = "=0.32.0", features = ["bundled", "chrono"] }
+tokio-rusqlite = { version = "=0.6.0", features = ["bundled"] }
+chrono = "0.4.38"
+chrono-tz = "0.10.0"
+
+# Security
+secp256k1 = { version = "0.30.0", features = ["hashes"] }
+serde_json = "1.0.132"
+
+# Runtime
+serde = { version = "1.0.213", features = ["derive"] }
+axum = "0.8.0-alpha.1"
+tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
+tracing-subscriber = "0.3.18"
