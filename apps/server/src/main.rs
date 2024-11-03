@@ -13,7 +13,7 @@ use dotenv::dotenv;
 use dotenv_codegen::dotenv;
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
-use std::fs::remove_file;
+use std::fs::{exists, remove_file};
 use std::path::PathBuf;
 use std::str::FromStr;
 use tokio_rusqlite::Connection;
@@ -21,14 +21,13 @@ use tokio_rusqlite::Connection;
 #[tokio::main]
 async fn main() {
     dotenv().ok();
-    let delete_db = dotenv!("DELETE_DB").parse::<bool>().unwrap();
-    let init = dotenv!("INITIALIZE_DB").parse::<bool>().unwrap();
     let db_path = PathBuf::from(dotenv!("DB_PATH"));
     let public_key = PublicKey::from_str(dotenv!("PUBLIC_KEY")).unwrap();
 
-    if delete_db {
-        remove_file(db_path.clone()).unwrap();
-    }
+    #[cfg(debug_assertions)]
+    remove_file(db_path.clone()).ok();
+
+    let init = !exists(db_path.clone()).unwrap();
 
     let conn = Connection::open(db_path).await.unwrap();
 

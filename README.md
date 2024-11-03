@@ -1,5 +1,9 @@
 # Long Distance Companion
 
+## Export Image
+`docker build -t long-distance-companion .`
+`docker save long-distance-companion > long-distance-companion.img`
+
 ## Generating Authentication Keys
 
 Because im cheap and don't want to set up HTTPS certificates im going to use a different authentication method for POST
