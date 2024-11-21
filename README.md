@@ -2,7 +2,11 @@
 
 ## Export Image
 `docker build -t long-distance-companion .`
-`docker save long-distance-companion > long-distance-companion.img`
+`docker save long-distance-companion | gzip > long-distance-companion.tar.gz`
+
+### Running
+`gunzip -c your-image-name.tar.gz | docker load`
+`docker run -d --rm -p 3000:3000 long-distance-companion`
 
 ## Generating Authentication Keys
 

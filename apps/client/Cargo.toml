@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ratatui = "0.29.1-alpha.0"
 tokio = { version = "1.0.0", features = ["rt", "rt-multi-thread", "macros"] }
 server = { path = "../server" }
 reqwest = { version = "0.12.9", features = ["json"] }
