@@ -1,10 +1,12 @@
 # Long Distance Companion
 
 ## Export Image
+
 `docker build -t long-distance-companion .`
 `docker save long-distance-companion | gzip > long-distance-companion.tar.gz`
 
 ### Running
+
 `gunzip -c your-image-name.tar.gz | docker load`
 `docker run -d --rm -p 3000:3000 long-distance-companion`
 
@@ -21,4 +23,9 @@ Simply running `cargo run --package server --release` should do the trick
 
 ## Using the client
 
+Simply run `cargo run --package client --release`
+
 ## Preparing the ESP32
+
+`cargo install espup && espup install && cargo install ldproxy`
+`. ~/export-esp.sh`
