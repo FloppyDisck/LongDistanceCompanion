@@ -5,11 +5,11 @@ use tokio_rusqlite::{params, Connection};
 
 #[derive(Clone)]
 pub struct Config {
-    pub(crate) db: Connection,
-    pub(crate) pubkey: PublicKey,
+    pub db: Connection,
+    pub pubkey: PublicKey,
 }
 
-pub(crate) async fn initialize_db(conn: &Connection) {
+pub async fn initialize_db(conn: &Connection) {
     conn.call(|conn| {
         // Create settings
         let query = "CREATE TABLE settings (

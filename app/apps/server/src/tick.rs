@@ -108,6 +108,49 @@ pub async fn query_ticks(connection: &Connection) -> Vec<Tick> {
         .unwrap()
 }
 
+/// WARNING: the returned data assumes that tick is one byte and hour and minute are two bytes, this reduces everything into
+pub async fn get_embedded_tick_history(State(config): State<Config>) -> impl IntoResponse {
+    Json(crate::tick::query_embedded_ticks(&config.db).await)
+}
+
+pub async fn query_embedded_ticks(connection: &Connection) -> String {
+    let time = Utc::now().with_timezone(&Puerto_Rico);
+    let datetime = time.date_naive().and_hms_opt(6, 0, 0).unwrap();
+
+    let collection: Vec<String> = connection
+        .call(move |conn| {
+            let res = conn
+                .prepare(
+                    "\
+                SELECT id, tick_type, created_at \
+                FROM ticks \
+                WHERE created_at >= ?1;",
+                )
+                .unwrap()
+                .query_map(params![datetime], |r| {
+                    let tick: u8 = r.get(1)?;
+                    let date_time: String = r.get(2)?;
+                    let date_time_vec: Vec<String> =
+                        date_time.split(' ').map(|s| s.to_string()).collect();
+                    let time = date_time_vec.get(1).unwrap();
+                    let time_vec: Vec<String> = time.split(':').map(|s| s.to_string()).collect();
+
+                    Ok(format!("{}{}{}", tick, time_vec[0], time_vec[1]))
+                })?
+                .map(|i| i.unwrap())
+                .collect();
+            Ok(res)
+        })
+        .await
+        .unwrap();
+
+    let mut res = String::new();
+    for collection in collection {
+        res = format!("{}{}", res, collection);
+    }
+    res
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -158,6 +201,8 @@ mod test {
         for tick in query_ticks(&conn).await {
             assert_eq!(tick.tick, 2);
         }
+
+        println!("{:?}", query_embedded_ticks(&conn).await);
 
         remove_file(db_path.clone()).unwrap();
     }

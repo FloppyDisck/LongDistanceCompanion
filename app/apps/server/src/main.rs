@@ -5,7 +5,7 @@ mod tick;
 
 use crate::config::{initialize_db, Config};
 use crate::settings::*;
-use crate::tick::{get_tick_history, get_ticks, trigger_tick};
+use crate::tick::{get_embedded_tick_history, get_tick_history, get_ticks, trigger_tick};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::Router;
@@ -47,6 +47,7 @@ async fn main() {
         .route("/tick", post(trigger_tick))
         .route("/ticks", get(get_ticks))
         .route("/tick_history", get(get_tick_history))
+        .route("/compressed_tick_history", get(get_embedded_tick_history))
         .with_state(Config {
             db: conn,
             pubkey: public_key,

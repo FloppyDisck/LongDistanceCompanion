@@ -30,7 +30,7 @@ const SSID: &str = "DemoNetwork";
 const PASSWORD: &str = "nomeacuerdo";
 
 const MESSAGE_QUERY: &str = "http://24.144.124.202:3000/message";
-const TICK_HISTORY_QUERY: &str = "http://24.144.124.202:3000/tick_history";
+const TICK_HISTORY_QUERY: &str = "http://24.144.124.202:3000/compressed_tick_history";
 
 // make a static variable
 macro_rules! mk_static {
