@@ -1,0 +1,27 @@
+[target.xtensa-esp32-none-elf]
+runner = "espflash flash --monitor"
+rustflags = [
+    "-C", "link-arg=-Wl,-Tlinkall.x",
+    "-C", "link-arg=-nostartfiles",
+]
+
+[env]
+ESP_LOG = "TRACE"
+SSID = "SSID"
+PASSWORD = "PASSWORD"
+STATIC_IP = "1.1.1.1 "
+GATEWAY_IP = "1.1.1.1"
+HOST_IP = "1.1.1.1"
+
+# WIFI arguments
+ESP_WIFI_CSI_ENABLE = "true"
+# Do this for using along with wireshark
+#ESP_WIFI_DUMP_PACKETS = "true"
+
+[build]
+rustflags = []
+
+target = "xtensa-esp32-none-elf"
+
+[unstable]
+build-std = ["alloc", "core"]
