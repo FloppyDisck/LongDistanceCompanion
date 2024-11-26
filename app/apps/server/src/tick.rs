@@ -1,5 +1,6 @@
 use crate::auth::evaulate;
 use crate::config::Config;
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -108,16 +109,17 @@ pub async fn query_ticks(connection: &Connection) -> Vec<Tick> {
         .unwrap()
 }
 
-/// WARNING: the returned data assumes that tick is one byte and hour and minute are two bytes, this reduces everything into
+/// WARNING: the returned data assumes that tick is one byte and hour and minute one byte each,
+/// this reduces each tick into 3 bytes total
 pub async fn get_embedded_tick_history(State(config): State<Config>) -> impl IntoResponse {
-    Json(crate::tick::query_embedded_ticks(&config.db).await)
+    crate::tick::query_embedded_ticks(&config.db).await
 }
 
-pub async fn query_embedded_ticks(connection: &Connection) -> String {
+pub async fn query_embedded_ticks(connection: &Connection) -> Bytes {
     let time = Utc::now().with_timezone(&Puerto_Rico);
     let datetime = time.date_naive().and_hms_opt(6, 0, 0).unwrap();
 
-    let collection: Vec<String> = connection
+    let collection: Vec<[u8; 3]> = connection
         .call(move |conn| {
             let res = conn
                 .prepare(
@@ -134,8 +136,10 @@ pub async fn query_embedded_ticks(connection: &Connection) -> String {
                         date_time.split(' ').map(|s| s.to_string()).collect();
                     let time = date_time_vec.get(1).unwrap();
                     let time_vec: Vec<String> = time.split(':').map(|s| s.to_string()).collect();
+                    let hour = time_vec[0].parse().unwrap();
+                    let minute = time_vec[1].parse().unwrap();
 
-                    Ok(format!("{}{}{}", tick, time_vec[0], time_vec[1]))
+                    Ok([tick, hour, minute])
                 })?
                 .map(|i| i.unwrap())
                 .collect();
@@ -144,11 +148,11 @@ pub async fn query_embedded_ticks(connection: &Connection) -> String {
         .await
         .unwrap();
 
-    let mut res = String::new();
+    let mut res = Vec::with_capacity(collection.len() * 3);
     for collection in collection {
-        res = format!("{}{}", res, collection);
+        res.append(&mut collection.to_vec());
     }
-    res
+    Bytes::from(res)
 }
 
 #[cfg(test)]
