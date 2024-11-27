@@ -148,7 +148,9 @@ pub async fn query_embedded_ticks(connection: &Connection) -> Bytes {
         .await
         .unwrap();
 
-    let mut res = Vec::with_capacity(collection.len() * 3);
+    let mut res = Vec::with_capacity((collection.len() * 3) + 2);
+    let collection_size: [u8; 2] = (collection.len() as u16).to_be_bytes();
+    res.append(&mut collection_size.to_vec());
     for collection in collection {
         res.append(&mut collection.to_vec());
     }
