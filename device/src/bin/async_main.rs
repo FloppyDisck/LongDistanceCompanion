@@ -1,36 +1,53 @@
 #![no_std]
 #![no_main]
 
-use alloc::format;
+use device::ServerState;
+use display_interface_spi::SPIInterface;
 use embassy_executor::Spawner;
-use embassy_net::dns::DnsSocket;
-use embassy_net::tcp::client::{TcpClient, TcpClientState};
-use embassy_net::tcp::TcpSocket;
-use embassy_net::{Stack, StackResources};
-use embassy_time::{Duration, Timer};
-use embedded_io_async::Write;
+use embassy_net::{
+    dns::DnsSocket,
+    tcp::client::{TcpClient, TcpClientState},
+    Stack, StackResources,
+};
+use embassy_time::{Delay, Duration, Timer};
+use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::text::TextStyle;
+use embedded_graphics::{
+    mono_font::MonoTextStyleBuilder,
+    pixelcolor::BinaryColor,
+    prelude::*,
+    prelude::*,
+    primitives::{PrimitiveStyle, Rectangle},
+    text::{Baseline, Text},
+};
+use embedded_hal::spi::{ErrorType, Operation, SpiBus};
+use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_alloc as _;
 use esp_backtrace as _;
-use esp_hal::prelude::*;
-use esp_hal::timer::timg::TimerGroup;
-use esp_println::println;
+use esp_hal::{
+    gpio::{Input, Level, Output, Pull},
+    prelude::*,
+    spi::{
+        master::{Config as SpiConfig, Spi},
+        SpiMode,
+    },
+    timer::timg::TimerGroup,
+    Blocking,
+};
 use esp_wifi::wifi::{
     ClientConfiguration, Configuration, WifiController, WifiDevice, WifiEvent, WifiStaDevice,
     WifiState,
 };
 use esp_wifi::EspWifiController;
-use heapless::{String, Vec};
 use log::{debug, error, info};
+use profont::PROFONT_9_POINT;
 use reqwless::client::HttpClient;
-use reqwless::request::Method;
+use weact_studio_epd::graphics::Display213BlackWhite;
+use weact_studio_epd::{Color, WeActStudio213BlackWhiteDriver};
 
 extern crate alloc;
 
-const SSID: &str = "DemoNetwork";
-const PASSWORD: &str = "nomeacuerdo";
-
-const MESSAGE_QUERY: &str = "http://24.144.124.202:3000/message";
-const TICK_HISTORY_QUERY: &str = "http://24.144.124.202:3000/compressed_tick_history";
+pub const QUERY_BUFFER_SIZE: usize = 1024 * 4;
 
 // make a static variable
 macro_rules! mk_static {
@@ -40,6 +57,42 @@ macro_rules! mk_static {
         let x = STATIC_CELL.uninit().write(($val));
         x
     }};
+}
+
+// Wifi network credentials
+const SSID: &str = "DemoNetwork";
+const PASSWORD: &str = "nomeacuerdo";
+
+struct SpiWrapper<'a> {
+    spi: Spi<'a, Blocking>,
+}
+
+impl<'a> SpiWrapper<'a> {
+    fn new(spi: Spi<'a, Blocking>) -> Self {
+        Self { spi }
+    }
+}
+
+impl<'a> ErrorType for SpiWrapper<'a> {
+    type Error = esp_hal::spi::Error;
+}
+
+impl<'a> embedded_hal::spi::SpiDevice for SpiWrapper<'a> {
+    fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), Self::Error> {
+        for operation in operations {
+            match operation {
+                Operation::Read(buf) => self.spi.read(buf)?,
+                Operation::Write(buf) => self.spi.write(buf)?,
+                Operation::Transfer(_read, write) => self.spi.write(write)?,
+                Operation::TransferInPlace(buf) => self.spi.transfer_in_place(buf)?,
+                Operation::DelayNs(dur) => {
+                    embassy_time::block_for(embassy_time::Duration::from_nanos(*dur as u64))
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[esp_hal_embassy::main]
@@ -55,6 +108,7 @@ async fn main(spawner: Spawner) {
 
     let timg1 = TimerGroup::new(peripherals.TIMG1);
     esp_hal_embassy::init(timg1.timer0);
+
     info!("Embassy initialized!");
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -70,7 +124,7 @@ async fn main(spawner: Spawner) {
 
     let wifi = peripherals.WIFI;
     let (wifi_interface, controller) =
-        esp_wifi::wifi::new_with_mode(&init, wifi, WifiStaDevice).unwrap();
+        esp_wifi::wifi::new_with_mode(init, wifi, WifiStaDevice).unwrap();
 
     let config = embassy_net::Config::dhcpv4(Default::default());
 
@@ -88,7 +142,7 @@ async fn main(spawner: Spawner) {
     );
 
     spawner.spawn(connection(controller)).ok();
-    spawner.spawn(net_task(&stack)).ok();
+    spawner.spawn(net_task(stack)).ok();
 
     // Check for link
     loop {
@@ -107,49 +161,93 @@ async fn main(spawner: Spawner) {
         Timer::after(Duration::from_millis(500)).await;
     }
 
-    let mut response_buffer = [0; 4096];
+    info!("Creating Http Client");
+    let mut response_buffer = [0; QUERY_BUFFER_SIZE];
+    let tcp_client_state: TcpClientState<1, 300, 1024> = TcpClientState::new();
+    let tcp = TcpClient::new(stack, &tcp_client_state);
+    let dns = DnsSocket::new(stack);
+    let mut client = HttpClient::new(&tcp, &dns);
+
+    info!("Initializing SPI");
+    let spi = Spi::new_with_config(
+        peripherals.SPI2,
+        SpiConfig {
+            frequency: 100.kHz(),
+            mode: SpiMode::Mode0,
+            ..Default::default()
+        },
+    )
+    .with_sck(peripherals.GPIO5)
+    .with_miso(peripherals.GPIO21)
+    .with_mosi(peripherals.GPIO19);
+
+    let cs_pin = Output::new(peripherals.GPIO15, Level::High);
+    let edc = Output::new(peripherals.GPIO33, Level::Low);
+    // The library asks for these but we're not using them
+    let reset = Output::new(peripherals.GPIO13, Level::High);
+    let busy = Input::new(peripherals.GPIO12, Pull::Down);
+
+    let spi_device = ExclusiveDevice::new(spi, cs_pin, Delay).unwrap();
+    let spi_interface = SPIInterface::new(spi_device, edc);
+
+    info!("Setting Up Display Controller");
+    let mut driver = WeActStudio213BlackWhiteDriver::new(spi_interface, busy, reset, Delay);
+    let mut display = Display213BlackWhite::new();
+    info!("Initializing Display Controller");
+    display.set_rotation(weact_studio_epd::graphics::DisplayRotation::Rotate90);
+    driver.init().unwrap();
+
+    info!("Clearing Display");
+    display.clear(Color::White);
+
+    info!("Demo write");
+    // display.set_rotation(DisplayRotation::Rotate0);
+    let style = MonoTextStyle::new(&PROFONT_9_POINT, Color::Black);
+    let _ = Text::with_text_style(
+        "Hello World!",
+        Point::new(0, 15),
+        style,
+        TextStyle::default(),
+    )
+    .draw(&mut display);
+    // Rectangle::new(Point::new(0, 0), Size::new(40, 40))
+    //     .into_styled(PrimitiveStyle::with_fill(Color::Black))
+    //     .draw(&mut display)
+    //     .unwrap();
+
+    info!("Creating State");
+    let mut state = ServerState::new(&mut client, &mut response_buffer).await;
+
     loop {
-        Timer::after(Duration::from_millis(1_000)).await;
-        let tcp_client_state: TcpClientState<1, 1024, 1024> = TcpClientState::new();
-        let mut tcp = TcpClient::new(&stack, &tcp_client_state);
-        // let mut tcp = TcpSocket::new(&stack, &mut rx_buffer, &mut tx_buffer);
-        let mut dns = DnsSocket::new(&stack);
+        state.update(&mut client, &mut response_buffer).await;
 
-        let mut client = HttpClient::new(&tcp, &dns);
+        debug!("Displaying");
+        // TODO: display message in the top left
 
-        let mut query = client
-            .request(Method::GET, TICK_HISTORY_QUERY)
-            .await
-            .unwrap();
+        // TODO: Display the graph
+        // TODO: maybe do a graph where each tick is a different thinking state
+        // TODO: maybe have bar charts, one on each side or all going up
+        // TODO: maybe simply have a count of each one and say whats the latest one
 
-        let response = query.send(&mut response_buffer).await.unwrap();
+        driver.full_update(&display).unwrap();
 
-        let mut body_buffer = [0; 1024];
-        response
-            .body()
-            .reader()
-            .read_to_end(&mut body_buffer)
-            .await
-            .unwrap();
-
-        let response_str = core::str::from_utf8(&body_buffer).unwrap();
-
-        info!("{}", response_str);
+        // Might need to increase even more
+        Timer::after(Duration::from_secs(600)).await;
     }
 }
 
 #[embassy_executor::task]
+async fn update_server_state() {}
+
+#[embassy_executor::task]
 async fn connection(mut controller: WifiController<'static>) {
-    info!("start connection task");
-    info!("Device capabilities: {:?}", controller.capabilities());
+    debug!("start connection task");
+    debug!("Device capabilities: {:?}", controller.capabilities());
     loop {
-        match esp_wifi::wifi::wifi_state() {
-            WifiState::StaConnected => {
-                // wait until we're no longer connected
-                controller.wait_for_event(WifiEvent::StaDisconnected).await;
-                Timer::after(Duration::from_millis(5000)).await
-            }
-            _ => {}
+        if esp_wifi::wifi::wifi_state() == WifiState::StaConnected {
+            // wait until we're no longer connected
+            controller.wait_for_event(WifiEvent::StaDisconnected).await;
+            Timer::after(Duration::from_millis(5000)).await
         }
         if !matches!(controller.is_started(), Ok(true)) {
             let client_config = Configuration::Client(ClientConfiguration {
@@ -158,16 +256,16 @@ async fn connection(mut controller: WifiController<'static>) {
                 ..Default::default()
             });
             controller.set_configuration(&client_config).unwrap();
-            info!("Starting wifi");
+            debug!("Starting wifi");
             controller.start_async().await.unwrap();
-            info!("Wifi started!");
+            debug!("Wifi started!");
         }
-        info!("About to connect...");
+        debug!("About to connect...");
 
         match controller.connect_async().await {
-            Ok(_) => info!("Wifi connected!"),
+            Ok(_) => debug!("Wifi connected!"),
             Err(e) => {
-                info!("Failed to connect to wifi: {e:?}");
+                error!("Failed to connect to wifi: {e:?}");
                 Timer::after(Duration::from_millis(5000)).await
             }
         }

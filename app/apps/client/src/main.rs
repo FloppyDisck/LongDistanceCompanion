@@ -1,13 +1,12 @@
 use dotenv_codegen::dotenv;
 use ratatui::crossterm::event;
-use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind};
+use ratatui::crossterm::event::{Event, KeyCode};
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::prelude::{
-    Color, Constraint, CrosstermBackend, Direction, Layout, Line, Style, Stylize, Text,
+    Color, Constraint, CrosstermBackend, Direction, Layout, Style, Stylize, Text,
 };
-use ratatui::symbols::border;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
-use ratatui::{DefaultTerminal, Terminal};
+use ratatui::Terminal;
 use reqwest::{Client, Response, Url};
 use secp256k1::SecretKey;
 use serde::Serialize;

@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
-use chrono::Utc;
+use chrono::{DateTime, NaiveTime, Timelike, Utc};
 use chrono_tz::America::Puerto_Rico;
 use serde::{Deserialize, Serialize};
 use tokio_rusqlite::{params, Connection};
@@ -81,8 +81,11 @@ pub async fn get_tick_history(State(config): State<Config>) -> Json<Vec<Tick>> {
 }
 
 pub async fn query_ticks(connection: &Connection) -> Vec<Tick> {
-    let time = Utc::now().with_timezone(&Puerto_Rico);
-    let datetime = time.date_naive().and_hms_opt(6, 0, 0).unwrap();
+    let time = Utc::now()
+        .with_timezone(&Puerto_Rico)
+        .with_time(NaiveTime::from_hms_opt(6, 0, 0).unwrap())
+        .unwrap()
+        .naive_utc();
 
     connection
         .call(move |conn| {
@@ -94,7 +97,7 @@ pub async fn query_ticks(connection: &Connection) -> Vec<Tick> {
                 WHERE created_at >= ?1;",
                 )
                 .unwrap()
-                .query_map(params![datetime], |r| {
+                .query_map(params![time], |r| {
                     Ok(Tick {
                         id: r.get(0)?,
                         tick: r.get(1)?,
@@ -116,8 +119,11 @@ pub async fn get_embedded_tick_history(State(config): State<Config>) -> impl Int
 }
 
 pub async fn query_embedded_ticks(connection: &Connection) -> Bytes {
-    let time = Utc::now().with_timezone(&Puerto_Rico);
-    let datetime = time.date_naive().and_hms_opt(6, 0, 0).unwrap();
+    let time = Utc::now()
+        .with_timezone(&Puerto_Rico)
+        .with_time(NaiveTime::from_hms_opt(6, 0, 0).unwrap())
+        .unwrap()
+        .naive_utc();
 
     let collection: Vec<[u8; 3]> = connection
         .call(move |conn| {
@@ -129,15 +135,12 @@ pub async fn query_embedded_ticks(connection: &Connection) -> Bytes {
                 WHERE created_at >= ?1;",
                 )
                 .unwrap()
-                .query_map(params![datetime], |r| {
+                .query_map(params![time], |r| {
                     let tick: u8 = r.get(1)?;
-                    let date_time: String = r.get(2)?;
-                    let date_time_vec: Vec<String> =
-                        date_time.split(' ').map(|s| s.to_string()).collect();
-                    let time = date_time_vec.get(1).unwrap();
-                    let time_vec: Vec<String> = time.split(':').map(|s| s.to_string()).collect();
-                    let hour = time_vec[0].parse().unwrap();
-                    let minute = time_vec[1].parse().unwrap();
+                    let date_time: DateTime<Utc> = r.get(2)?;
+                    let local_time = date_time.with_timezone(&Puerto_Rico);
+                    let hour = local_time.hour() as u8;
+                    let minute = local_time.minute() as u8;
 
                     Ok([tick, hour, minute])
                 })?
@@ -161,7 +164,7 @@ pub async fn query_embedded_ticks(connection: &Connection) -> Bytes {
 mod test {
     use super::*;
     use crate::config::initialize_db;
-    use chrono::{Datelike, Days, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+    use chrono::{Days, NaiveTime, Utc};
     use chrono_tz::America::Puerto_Rico;
     use std::fs::remove_file;
     use std::path::PathBuf;
@@ -178,25 +181,20 @@ mod test {
             let insert = "INSERT INTO ticks (tick_type, created_at) VALUES (?1, ?2);";
             let mut ticks_insert = conn.prepare(insert)?;
 
-            // Set yesterday
             for hour in 0..24 {
-                let time = Utc::now().with_timezone(&Puerto_Rico);
-                let date = NaiveDate::from_ymd_opt(time.year(), time.month(), time.day())
+                let time = Utc::now()
+                    .with_timezone(&Puerto_Rico)
+                    .with_time(NaiveTime::from_hms_opt(hour, 0, 0).unwrap())
                     .unwrap()
-                    .checked_sub_days(Days::new(1))
-                    .unwrap();
-                let time = NaiveDateTime::new(date, NaiveTime::from_hms_opt(hour, 0, 0).unwrap());
+                    .naive_utc();
 
-                ticks_insert.execute(params![1, time]).unwrap();
-            }
-
-            // Set today
-            for hour in 0..24 {
-                let time = Utc::now().with_timezone(&Puerto_Rico);
-                let date = NaiveDate::from_ymd_opt(time.year(), time.month(), time.day()).unwrap();
-                let time = NaiveDateTime::new(date, NaiveTime::from_hms_opt(hour, 0, 0).unwrap());
-
+                // Today
                 ticks_insert.execute(params![2, time]).unwrap();
+
+                // Yesterday
+                ticks_insert
+                    .execute(params![1, time.checked_sub_days(Days::new(1)).unwrap()])
+                    .unwrap();
             }
 
             Ok(())
